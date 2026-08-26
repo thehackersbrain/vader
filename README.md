@@ -6,16 +6,16 @@ A GPT-2-scale language model built from scratch, trained on a single free-tier G
 
 Standard decoder-only transformer, GPT-2 recipe:
 
-| | |
-|---|---|
-| Vocab size | 50,257 (GPT-2 BPE via `tiktoken`) |
-| Context length | 1024 |
-| Embedding dim | 768 |
-| Layers | 12 |
-| Attention heads | 12 |
-| Dropout | 0.1 |
+|                   |                                   |
+| ----------------- | --------------------------------- |
+| Vocab size        | 50,257 (GPT-2 BPE via `tiktoken`) |
+| Context length    | 1024                              |
+| Embedding dim     | 768                               |
+| Layers            | 12                                |
+| Attention heads   | 12                                |
+| Dropout           | 0.1                               |
 | Position encoding | Learned absolute (`nn.Embedding`) |
-| Weight tying | Token embedding ↔ output head |
+| Weight tying      | Token embedding ↔ output head    |
 
 ## Training
 
@@ -30,22 +30,28 @@ Standard decoder-only transformer, GPT-2 recipe:
 
 ```
 .
-├── train.py                      # main training loop, model definition
-├── base_dataset.py               # tokenises raw text corpus into train/validation .bin
+├── train.py                 # main training loop, model definition
+├── base-dataset.py          # tokenises fineweb-edu into train/validation .bin
+├── star-wars-dataset.py     # scrapes + converts the Star Wars domain corpus (scrape/convert subcommands)
 └── README.md
 ```
 
 ### Running it
 
-Requires `torch`, `tiktoken`, `numpy`, `rich`.
+Requires `torch`, `tiktoken`, `numpy`, `rich`, `datasets`, `tqdm`, `requests`, `pandas`, `pyarrow`.
 
 ```bash
-pip install torch tiktoken numpy rich
-python base_dataset.py       # produces data/train.bin, data/validation.bin
-python train.py              # resumes from out/checkpoint.pt if present, else starts fresh
+pip install torch tiktoken numpy rich datasets tqdm requests pandas pyarrow
+
+python base-dataset.py                    # produces data/train.bin, data/validation.bin
+
+python star-wars-dataset.py scrape        # scrapes Wookieepedia -> star_wars_articles.jsonl
+python star-wars-dataset.py convert       # converts JSONL -> star_wars_corpus.parquet
+
+python train.py                           # resumes from out/checkpoint.pt if present, else starts fresh
 ```
 
-Config lives in `TRAIN_CFG` and `GPT_CONFIG_124m` at the top of `train.py`, no CLI flags currently.
+Config lives in `TRAIN_CFG` and `CONFIG_124m` at the top of `train.py`, no CLI flags currently. `star-wars-dataset.py` takes `--out-dir`/`--resume-from` for `scrape` and `--input`/`--output` for `convert`, run with `-h` on either subcommand for details.
 
 ## Roadmap
 
@@ -57,7 +63,7 @@ Config lives in `TRAIN_CFG` and `GPT_CONFIG_124m` at the top of `train.py`, no C
 ## Data & licensing
 
 - Base training corpus: [`HuggingFaceFW/fineweb-edu`](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu), `sample-10BT` config, streamed and tokenised up to a 2B-token cap (~0.5% held out for validation). Licensed under [ODC-By 1.0](https://opendatacommons.org/licenses/by/1-0/) (Open Data Commons Attribution), use is also subject to [Common Crawl's Terms of Use](https://commoncrawl.org/terms-of-use) since FineWeb-Edu is Common Crawl-derived.
-- Star Wars domain data: scraped from [Wookieepedia](https://starwars.fandom.com), licensed CC BY-SA 3.0. Only tokenised `.bin` output is intended for public release.
+- Star Wars domain data: scraped from [Wookieepedia](https://starwars.fandom.com), licensed CC BY-SA 3.0. Only tokenised/Parquet output is intended for public release.
 
 ## Author
 
