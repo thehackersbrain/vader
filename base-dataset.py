@@ -10,8 +10,10 @@ DATASET_NAME = "HuggingFaceFW/fineweb-edu"
 DATASET_CONFIG = "sample-10BT"
 OUT_DIR = "/kaggle/working/data"
 MAX_TOKENS = 2_000_000_000
-VAL_EVERY_N = 200                # 1 in 200 examples (~0.5%) goes to validation
-FLUSH_EVERY_TOKENS = 2_000_000   # disk write cadence, tune down if you distrust the connection
+VAL_EVERY_N = 200  # 1 in 200 examples (~0.5%) goes to validation
+FLUSH_EVERY_TOKENS = (
+    2_000_000  # disk write cadence, tune down if you distrust the connection
+)
 
 
 def load_progress(progress_path):
@@ -61,7 +63,9 @@ def main(out_dir=OUT_DIR, max_tokens=MAX_TOKENS):
     train_buffer, val_buffer = [], []
     buffered_tokens = 0
 
-    pbar = tqdm(total=max_tokens, initial=state["train_tokens"], unit="tok", desc="train tokens")
+    pbar = tqdm(
+        total=max_tokens, initial=state["train_tokens"], unit="tok", desc="train tokens"
+    )
 
     for example in ds:
         ids = enc.encode_ordinary(example["text"])
@@ -95,7 +99,9 @@ def main(out_dir=OUT_DIR, max_tokens=MAX_TOKENS):
     save_progress(progress_path, state)
     pbar.close()
 
-    print(f"done: {state['train_tokens']:,} train tokens, {state['val_tokens']:,} val tokens in {out_dir}")
+    print(
+        f"done: {state['train_tokens']:,} train tokens, {state['val_tokens']:,} val tokens in {out_dir}"
+    )
 
 
 if __name__ == "__main__":

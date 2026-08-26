@@ -235,7 +235,9 @@ def create_dataloader(bin_path, ctx_len, batch_size, shuffle):
     )
 
 
-def generate(model, idx, max_new_tokens, context_size, temp=0.0, top_k=None, eos_id=None):
+def generate(
+    model, idx, max_new_tokens, context_size, temp=0.0, top_k=None, eos_id=None
+):
     for _ in range(max_new_tokens):
         idx_cnd = idx[:, -context_size:]
         with torch.no_grad():
@@ -269,12 +271,24 @@ def token_ids_to_text(token_ids, tokenizer):
     return tokenizer.decode(token_ids.squeeze(0).tolist())
 
 
-def generate_and_print_sample(model, tokenizer, device, prompt, ctx_len, temp=0.0, top_k=None):
+def generate_and_print_sample(
+    model, tokenizer, device, prompt, ctx_len, temp=0.0, top_k=None
+):
     model.eval()
     encoded = text_to_token_ids(prompt, tokenizer).to(device)
     with torch.no_grad():
-        token_ids = generate(model, encoded, max_new_tokens=60, context_size=ctx_len, temp=temp, top_k=top_k)
-    print("[bold cyan]sample:[/bold cyan]", token_ids_to_text(token_ids, tokenizer).replace("\n", " "))
+        token_ids = generate(
+            model,
+            encoded,
+            max_new_tokens=60,
+            context_size=ctx_len,
+            temp=temp,
+            top_k=top_k,
+        )
+    print(
+        "[bold cyan]sample:[/bold cyan]",
+        token_ids_to_text(token_ids, tokenizer).replace("\n", " "),
+    )
     model.train()
 
 
@@ -286,7 +300,9 @@ def get_lr(step, cfg):
         return cfg["max_lr"] * (step + 1) / cfg["warmup_steps"]
     if step > cfg["max_steps"]:
         return cfg["min_lr"]
-    decay_ratio = (step - cfg["warmup_steps"]) / (cfg["max_steps"] - cfg["warmup_steps"])
+    decay_ratio = (step - cfg["warmup_steps"]) / (
+        cfg["max_steps"] - cfg["warmup_steps"]
+    )
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return cfg["min_lr"] + coeff * (cfg["max_lr"] - cfg["min_lr"])
 
@@ -308,9 +324,7 @@ def estimate_loss(model, loader, device, eval_iters):
         xb, yb = xb.to(device), yb.to(device)
         with torch.autocast(device_type="cuda", dtype=torch.float16):
             logits = model(xb)
-            loss = torch.nn.functional.cross_entropy(
-                logits.flatten(0, 1), yb.flatten()
-            )
+            loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), yb.flatten())
         losses[i] = loss.item()
     model.train()
     return losses.mean().item()
@@ -342,11 +356,15 @@ def load_checkpoint(path, model, optimizer, scaler, device):
 def main():
     cfg = TRAIN_CFG
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f"Device in use: {device} (single-GPU, no DDP: see chat notes on Kaggle quota cost)")
+    print(
+        f"Device in use: {device} (single-GPU, no DDP: see chat notes on Kaggle quota cost)"
+    )
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated(device) / 1e9
         reserved = torch.cuda.memory_reserved(device) / 1e9
-        print(f"GPU memory before model init: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
+        print(
+            f"GPU memory before model init: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved"
+        )
         if allocated > 0.5:
             print(
                 "[red]non-trivial memory already in use before the model exists, "
@@ -359,10 +377,16 @@ def main():
     ctx_len = CONFIG_124m["train_ctx"]
 
     train_loader = create_dataloader(
-        os.path.join(cfg["data_dir"], "train.bin"), ctx_len, cfg["batch_size"], shuffle=True
+        os.path.join(cfg["data_dir"], "train.bin"),
+        ctx_len,
+        cfg["batch_size"],
+        shuffle=True,
     )
     val_loader = create_dataloader(
-        os.path.join(cfg["data_dir"], "validation.bin"), ctx_len, cfg["batch_size"], shuffle=False
+        os.path.join(cfg["data_dir"], "validation.bin"),
+        ctx_len,
+        cfg["batch_size"],
+        shuffle=False,
     )
 
     torch.manual_seed(123)
@@ -379,7 +403,9 @@ def main():
             import shutil
 
             shutil.copy(cfg["resume_from_input"], ckpt_path)
-            print(f"[yellow]copied checkpoint forward from {cfg['resume_from_input']}[/yellow]")
+            print(
+                f"[yellow]copied checkpoint forward from {cfg['resume_from_input']}[/yellow]"
+            )
         else:
             print(
                 f"[red]resume_from_input set but not found at {cfg['resume_from_input']}, "
@@ -438,14 +464,24 @@ def main():
         if step % cfg["eval_every"] == 0 and step > 0:
             val_loss = estimate_loss(model, val_loader, device, cfg["eval_iters"])
             print(f"[bold green]step {step:06d} val_loss {val_loss:.4f}[/bold green]")
-            generate_and_print_sample(model, tokenizer, device, cfg["sample_prompt"], ctx_len, temp=cfg["sample_temp"], top_k=cfg["sample_top_k"])
+            generate_and_print_sample(
+                model,
+                tokenizer,
+                device,
+                cfg["sample_prompt"],
+                ctx_len,
+                temp=cfg["sample_temp"],
+                top_k=cfg["sample_top_k"],
+            )
 
         if step % cfg["ckpt_every"] == 0 and step > 0:
             save_checkpoint(ckpt_path, model, optimizer, scaler, step + 1)
             print(f"[dim]checkpoint saved at step {step}[/dim]")
 
     save_checkpoint(ckpt_path, model, optimizer, scaler, cfg["max_steps"])
-    torch.save(model.state_dict(), os.path.join(cfg["out_dir"], "vader_model_final.pth"))
+    torch.save(
+        model.state_dict(), os.path.join(cfg["out_dir"], "vader_model_final.pth")
+    )
     print("[bold green]training complete, final weights saved[/bold green]")
 
 
