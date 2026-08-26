@@ -31,17 +31,17 @@ Standard decoder-only transformer, GPT-2 recipe:
 ```
 .
 ├── train.py                 # main training loop, model definition
-├── base_dataset.py          # tokenises fineweb-edu into train/validation .bin
+├── base-dataset.py          # tokenises fineweb-edu into train/validation .bin
 ├── star-wars-dataset.py     # scrapes + converts the Star Wars domain corpus (scrape/convert subcommands)
 └── README.md
 ```
 
 ### Running it
 
-Requires `torch`, `tiktoken`, `numpy`, `rich`, `datasets`, `tqdm`, `requests`, `pandas`, `pyarrow`.
+Requires `torch`, `tiktoken`, `numpy`, `rich`, `datasets`, `tqdm`, `requests`, `pandas`, `pyarrow`, `mwparserfromhell`.
 
 ```bash
-pip install torch tiktoken numpy rich datasets tqdm requests pandas pyarrow
+pip install torch tiktoken numpy rich datasets tqdm requests pandas pyarrow mwparserfromhell
 
 python base_dataset.py                    # produces data/train.bin, data/validation.bin
 

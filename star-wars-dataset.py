@@ -5,6 +5,7 @@ import time
 import datetime
 import requests
 import pandas as pd
+import mwparserfromhell
 
 API_URL = "https://starwars.fandom.com/api.php"
 HEADERS = {"User-Agent": "VaderDatasetBuilder/1.0 (personal research project)"}
@@ -13,12 +14,10 @@ BATCH_SIZE = 20
 FLUSH_EVERY = 100
 MIN_TEXT_LEN = 200
 MAX_RETRIES = 5
-RETRY_BACKOFF = 2.0  # seconds, doubles each retry
+RETRY_BACKOFF = 2.0
 
 
 def api_get(params):
-    """requests.get with retry/backoff, so a transient network blip doesn't
-    kill a multi-hour run outright."""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             r = requests.get(API_URL, params=params, headers=HEADERS, timeout=30)
@@ -57,7 +56,7 @@ def get_all_page_titles(titles_path):
     while True:
         params = {
             "action": "query", "list": "allpages", "apnamespace": 0,
-            "apfilterredir": "nonredirects",  # skip redirects, no real prose to extract
+            "apfilterredir": "nonredirects",
             "aplimit": "500", "format": "json",
         }
         if apcontinue:
@@ -78,16 +77,26 @@ def get_all_page_titles(titles_path):
 
 def get_plaintext(titles_batch):
     params = {
-        "action": "query", "prop": "extracts|info", "explaintext": 1,
-        "exsectionformat": "plain", "exlimit": str(len(titles_batch)),  # was defaulting to 1
-        "inprop": "url", "titles": "|".join(titles_batch), "format": "json",
+        "action": "query", "prop": "revisions|info",
+        "rvprop": "content", "rvslots": "main", "inprop": "url",
+        "titles": "|".join(titles_batch), "format": "json",
     }
     data = api_get(params)
     pages = data.get("query", {}).get("pages", {})
-    return {
-        p["title"]: {"text": p.get("extract", ""), "url": p.get("fullurl", "")}
-        for p in pages.values()
-    }
+
+    result = {}
+    for p in pages.values():
+        title = p.get("title", "")
+        url = p.get("fullurl", "")
+        revisions = p.get("revisions", [])
+        wikitext = revisions[0].get("slots", {}).get("main", {}).get("*", "") if revisions else ""
+
+        if wikitext.strip().upper().startswith("#REDIRECT"):
+            continue  # belt-and-braces, apfilterredir should already exclude these
+
+        text = mwparserfromhell.parse(wikitext).strip_code() if wikitext else ""
+        result[title] = {"text": text, "url": url}
+    return result
 
 
 def load_progress(progress_path):
@@ -166,7 +175,7 @@ def cmd_scrape(args):
 # sanity check
 # --------------------------------------------------------------------------
 def cmd_sanity(args):
-    sample = get_plaintext(["Darth Vader", "Luke Skywalker", "Tatooine"])
+    sample = get_plaintext(["Luke Skywalker", "Anakin Skywalker", "Tatooine"])
     ok = True
     for title, page in sample.items():
         length = len(page["text"])
@@ -218,17 +227,13 @@ def main():
     p_sanity.set_defaults(func=cmd_sanity)
 
     p_scrape = sub.add_parser("scrape", help="scrape Wookieepedia via the Fandom API")
-    p_scrape.add_argument("--out-dir", default="/kaggle/working/star_wars_raw",
-                           help="output directory for titles.json, progress.json, articles.jsonl")
-    p_scrape.add_argument("--resume-from", default=None,
-                           help="path to a previous session's output dir, e.g. an attached Kaggle input")
+    p_scrape.add_argument("--out-dir", default="/kaggle/working/star_wars_raw")
+    p_scrape.add_argument("--resume-from", default=None)
     p_scrape.set_defaults(func=cmd_scrape)
 
     p_convert = sub.add_parser("convert", help="convert scraped JSONL into a Parquet file")
-    p_convert.add_argument("--input", default="/kaggle/working/star_wars_raw/star_wars_articles.jsonl",
-                            help="path to the JSONL produced by the scrape command")
-    p_convert.add_argument("--output", default="/kaggle/working/star_wars_corpus.parquet",
-                            help="path to write the output Parquet file")
+    p_convert.add_argument("--input", default="/kaggle/working/star_wars_raw/star_wars_articles.jsonl")
+    p_convert.add_argument("--output", default="/kaggle/working/star_wars_corpus.parquet")
     p_convert.set_defaults(func=cmd_convert)
 
     args = parser.parse_args()
