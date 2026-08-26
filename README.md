@@ -64,7 +64,7 @@ Config lives in `TRAIN_CFG` and `CONFIG_124m` at the top of `train.py`, no CLI f
 ## Data & licensing
 
 - Base training corpus: [`HuggingFaceFW/fineweb-edu`](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu), `sample-10BT` config, streamed and tokenised up to a 2B-token cap (~0.5% held out for validation). Licensed under [ODC-By 1.0](https://opendatacommons.org/licenses/by/1-0/) (Open Data Commons Attribution), use is also subject to [Common Crawl's Terms of Use](https://commoncrawl.org/terms-of-use) since FineWeb-Edu is Common Crawl-derived.
-- Star Wars domain data: scraped from [Wookieepedia](https://starwars.fandom.com), licensed CC BY-SA 3.0. Only tokenised/Parquet output is intended for public release.
+- Star Wars domain data: scraped from [Wookieepedia](https://starwars.fandom.com), licensed CC BY-SA 3.0. Full dataset on huggingface [thehackersbrain/star-wars-dataset](https://huggingface.co/datasets/thehackersbrain/star-wars-dataset).
 
 ## Author
 
