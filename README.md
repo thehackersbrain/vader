@@ -61,4 +61,4 @@ Config lives in `TRAIN_CFG` and `GPT_CONFIG_124m` at the top of `train.py`, no C
 
 ## Author
 
-Built by [thehackersbrain](https://github.com/thehackersbrain).
+Built by [Gaurav Raj (@thehackersbrain)](https://thehackersbrain.dev).
