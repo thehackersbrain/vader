@@ -55,9 +55,6 @@ TRAIN_CFG = {
 }
 
 
-# --------------------------------------------------------------------------
-# Model (architecture unchanged from your original, weight tying added)
-# --------------------------------------------------------------------------
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_in, d_out, context_len, dropout, num_heads, qkv_bias=False):
         super().__init__()
