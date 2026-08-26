@@ -31,7 +31,7 @@ Standard decoder-only transformer, GPT-2 recipe:
 ```
 .
 ├── train.py                 # main training loop, model definition
-├── base-dataset.py          # tokenises fineweb-edu into train/validation .bin
+├── base_dataset.py          # tokenises fineweb-edu into train/validation .bin
 ├── star-wars-dataset.py     # scrapes + converts the Star Wars domain corpus (scrape/convert subcommands)
 └── README.md
 ```
@@ -43,15 +43,16 @@ Requires `torch`, `tiktoken`, `numpy`, `rich`, `datasets`, `tqdm`, `requests`, `
 ```bash
 pip install torch tiktoken numpy rich datasets tqdm requests pandas pyarrow
 
-python base-dataset.py                    # produces data/train.bin, data/validation.bin
+python base_dataset.py                    # produces data/train.bin, data/validation.bin
 
+python star-wars-dataset.py sanity        # confirms the API returns real text before committing to a full scrape
 python star-wars-dataset.py scrape        # scrapes Wookieepedia -> star_wars_articles.jsonl
 python star-wars-dataset.py convert       # converts JSONL -> star_wars_corpus.parquet
 
 python train.py                           # resumes from out/checkpoint.pt if present, else starts fresh
 ```
 
-Config lives in `TRAIN_CFG` and `CONFIG_124m` at the top of `train.py`, no CLI flags currently. `star-wars-dataset.py` takes `--out-dir`/`--resume-from` for `scrape` and `--input`/`--output` for `convert`, run with `-h` on either subcommand for details.
+Config lives in `TRAIN_CFG` and `CONFIG_124m` at the top of `train.py`, no CLI flags currently. `star-wars-dataset.py` takes `--out-dir`/`--resume-from` for `scrape` and `--input`/`--output` for `convert`, run with `-h` on any subcommand for details. Always run `sanity` before `scrape`, it's a two-second check that catches API response issues before they silently burn hours of runtime.
 
 ## Roadmap
 
