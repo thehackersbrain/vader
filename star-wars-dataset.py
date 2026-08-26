@@ -12,6 +12,24 @@ HEADERS = {"User-Agent": "VaderDatasetBuilder/1.0 (personal research project)"}
 BATCH_SIZE = 20
 FLUSH_EVERY = 100
 MIN_TEXT_LEN = 200
+MAX_RETRIES = 5
+RETRY_BACKOFF = 2.0  # seconds, doubles each retry
+
+
+def api_get(params):
+    """requests.get with retry/backoff, so a transient network blip doesn't
+    kill a multi-hour run outright."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            r = requests.get(API_URL, params=params, headers=HEADERS, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        except (requests.RequestException, ValueError) as e:
+            if attempt == MAX_RETRIES:
+                raise
+            wait = RETRY_BACKOFF * (2 ** (attempt - 1))
+            print(f"[retry] request failed ({e}), attempt {attempt}/{MAX_RETRIES}, waiting {wait:.0f}s")
+            time.sleep(wait)
 
 
 # --------------------------------------------------------------------------
@@ -39,12 +57,12 @@ def get_all_page_titles(titles_path):
     while True:
         params = {
             "action": "query", "list": "allpages", "apnamespace": 0,
+            "apfilterredir": "nonredirects",  # skip redirects, no real prose to extract
             "aplimit": "500", "format": "json",
         }
         if apcontinue:
             params["apcontinue"] = apcontinue
-        r = requests.get(API_URL, params=params, headers=HEADERS, timeout=30)
-        data = r.json()
+        data = api_get(params)
         titles.extend(p["title"] for p in data["query"]["allpages"])
         if "continue" in data:
             apcontinue = data["continue"]["apcontinue"]
@@ -61,11 +79,11 @@ def get_all_page_titles(titles_path):
 def get_plaintext(titles_batch):
     params = {
         "action": "query", "prop": "extracts|info", "explaintext": 1,
-        "exsectionformat": "plain", "inprop": "url",
-        "titles": "|".join(titles_batch), "format": "json",
+        "exsectionformat": "plain", "exlimit": str(len(titles_batch)),  # was defaulting to 1
+        "inprop": "url", "titles": "|".join(titles_batch), "format": "json",
     }
-    r = requests.get(API_URL, params=params, headers=HEADERS, timeout=30)
-    pages = r.json().get("query", {}).get("pages", {})
+    data = api_get(params)
+    pages = data.get("query", {}).get("pages", {})
     return {
         p["title"]: {"text": p.get("extract", ""), "url": p.get("fullurl", "")}
         for p in pages.values()
@@ -145,10 +163,39 @@ def cmd_scrape(args):
 
 
 # --------------------------------------------------------------------------
+# sanity check
+# --------------------------------------------------------------------------
+def cmd_sanity(args):
+    sample = get_plaintext(["Darth Vader", "Luke Skywalker", "Tatooine"])
+    ok = True
+    for title, page in sample.items():
+        length = len(page["text"])
+        print(f"{title}: {length} chars, url={page['url']}")
+        if length < MIN_TEXT_LEN:
+            ok = False
+    if not ok:
+        raise SystemExit("[FAILED] one or more sample pages returned no real text, do not run scrape yet")
+    print("[passed] safe to run 'scrape'")
+
+
+# --------------------------------------------------------------------------
 # convert
 # --------------------------------------------------------------------------
 def cmd_convert(args):
+    if not os.path.exists(args.input) or os.path.getsize(args.input) == 0:
+        raise SystemExit(
+            f"[error] {args.input} is missing or empty. "
+            f"Has 'scrape' actually written any articles yet? Check progress.json."
+        )
+
     df = pd.read_json(args.input, lines=True)
+
+    if "text" not in df.columns:
+        raise SystemExit(
+            f"[error] parsed {len(df)} rows but no 'text' column found, "
+            f"file may be truncated or corrupted, check the raw JSONL manually."
+        )
+
     print(f"{len(df):,} articles, {df['text'].str.len().sum():,} characters total")
 
     before = len(df)
@@ -166,6 +213,9 @@ def cmd_convert(args):
 def main():
     parser = argparse.ArgumentParser(description="Star Wars (Wookieepedia) dataset builder")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_sanity = sub.add_parser("sanity", help="quick check that the API is returning real text before committing to a full scrape")
+    p_sanity.set_defaults(func=cmd_sanity)
 
     p_scrape = sub.add_parser("scrape", help="scrape Wookieepedia via the Fandom API")
     p_scrape.add_argument("--out-dir", default="/kaggle/working/star_wars_raw",
