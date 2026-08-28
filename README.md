@@ -1,5 +1,7 @@
 # Vader
 
+![vader](./vader.png)
+
 A GPT-2-scale language model built from scratch, trained on a single free-tier GPU. No frameworks doing the heavy lifting, no pretrained checkpoints, the transformer, tokenisation pipeline, and training loop are all hand-written.
 
 Base pretrain, context-extension + Star Wars domain mix-in, and instruction fine-tuning with a hybrid factual/Star Wars-flavoured identity are all complete. Packaging for standard `transformers`-style distribution is in progress.
