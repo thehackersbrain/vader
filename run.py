@@ -1,9 +1,16 @@
+import argparse
+
+import tiktoken
 import torch
 import torch.nn as nn
-import tiktoken
 from rich import print
+from rich.console import Console
 
-CONFIG_124m = {
+
+# ==========================================================================
+# Configuration
+# ==========================================================================
+CONFIG_124M = {
     "vocab_size": 50257,
     "context_len": 1024,
     "emb_dim": 768,
@@ -13,11 +20,20 @@ CONFIG_124m = {
     "qkv_bias": False,
 }
 
-TRAINED_CTX = 256
+MODEL_PATH = "vader.pth"
 
-MODEL = "vader.pth"
+EOS_ID = 50256
+
+SYSTEM_TEXT = (
+    "You are Vader, a language model built by Gaurav Raj (thehackersbrain). "
+    "You were named after Darth Vader from Star Wars. Speak with a bit of that flavour, "
+    "but you're an AI, not a Sith Lord."
+)
 
 
+# ==========================================================================
+# Model
+# ==========================================================================
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_in, d_out, dropout, num_heads, qkv_bias=False):
         super().__init__()
@@ -81,9 +97,7 @@ class FeedForward(nn.Module):
         super().__init__()
         self.layers = nn.Sequential(
             nn.Linear(cfg["emb_dim"], 4 * cfg["emb_dim"]),
-            nn.GELU(
-                approximate="tanh"
-            ),  # parameter-free, identical formula to the hand-rolled version, safe
+            nn.GELU(approximate="tanh"),
             nn.Linear(4 * cfg["emb_dim"], cfg["emb_dim"]),
         )
 
@@ -135,9 +149,10 @@ class Model(nn.Module):
         self.out_head.weight = self.tok_emb.weight
 
     def forward(self, in_idx):
-        batch_size, seq_len = in_idx.shape
+        _, seq_len = in_idx.shape
         tok_embeds = self.tok_emb(in_idx)
-        pos_embeds = self.pos_emb(torch.arange(seq_len, device=in_idx.device))
+        pos_ids = torch.arange(seq_len, device=in_idx.device)
+        pos_embeds = self.pos_emb(pos_ids)
         x = tok_embeds + pos_embeds
         x = self.drop_emb(x)
         x = self.trf_blocks(x)
@@ -145,87 +160,266 @@ class Model(nn.Module):
         return self.out_head(x)
 
 
-def generate(
-    model, idx, max_new_tokens, context_size, temp=0.0, top_k=None, eos_id=None
-):
-    for _ in range(max_new_tokens):
-        idx_cnd = idx[:, -context_size:]
-        with torch.no_grad():
-            logits = model(idx_cnd)
-        logits = logits[:, -1, :]
+# ==========================================================================
+# Checkpoint loading
+# ==========================================================================
+def load_weights(model, path, device):
+    raw_sd = torch.load(path, map_location=device)
+    filtered_sd = {k: v for k, v in raw_sd.items() if not k.endswith(".att.mask")}
+    dropped = len(raw_sd) - len(filtered_sd)
+    missing, unexpected = model.load_state_dict(filtered_sd, strict=False)
 
-        if top_k is not None:
-            top_logits, _ = torch.topk(logits, top_k)
-            min_val = top_logits[:, -1]
-            logits = torch.where(
-                logits < min_val, torch.tensor(float("-inf")).to(logits.device), logits
-            )
-        if temp > 0.0:
-            logits = logits / temp
-            probs = torch.softmax(logits, dim=-1)
-            idx_nxt = torch.multinomial(probs, num_samples=1)
-        else:
-            idx_nxt = torch.argmax(logits, dim=-1, keepdim=True)
+    if dropped:
+        print(f"[dim]dropped {dropped} legacy attention-mask key(s)[/dim]")
+    if missing:
+        raise RuntimeError(
+            "Missing model keys after loading:\n"
+            + "\n".join(f"  - {k}" for k in missing)
+        )
+    if unexpected:
+        raise RuntimeError(
+            "Unexpected model keys after loading:\n"
+            + "\n".join(f"  - {k}" for k in unexpected)
+        )
 
-        if idx_nxt == eos_id:
-            break
-        idx = torch.cat((idx, idx_nxt), dim=1)
-    return idx
+    print(f"[green]loaded weights from {path}[/green]")
 
 
+# ==========================================================================
+# Tokenisation
+# ==========================================================================
 def text_to_token_ids(text, tokenizer):
     encoded = tokenizer.encode(text, allowed_special={"<|endoftext|>"})
-    return torch.tensor(encoded).unsqueeze(0)
+    return torch.tensor(encoded, dtype=torch.long).unsqueeze(0)
 
 
 def token_ids_to_text(token_ids, tokenizer):
     return tokenizer.decode(token_ids.squeeze(0).tolist())
 
 
-def load_weights(model, path, device):
-    raw_sd = torch.load(path, map_location=device)
-    filtered_sd = {k: v for k, v in raw_sd.items() if not k.endswith(".att.mask")}
+# ==========================================================================
+# Generation
+# ==========================================================================
+@torch.inference_mode()
+def generate(
+    model, idx, max_new_tokens, context_size, temp=0.3, top_k=10, eos_id=EOS_ID
+):
+    for _ in range(max_new_tokens):
+        idx_cond = idx[:, -context_size:]
+        logits = model(idx_cond)
+        logits = logits[:, -1, :]
 
-    missing, unexpected = model.load_state_dict(filtered_sd, strict=False)
-    dropped = len(raw_sd) - len(filtered_sd)
-    if dropped:
-        print(
-            f"[dim]dropped {dropped} legacy 'mask' buffer keys from the old training script[/dim]"
+        if top_k is not None:
+            k = min(top_k, logits.size(-1))
+            top_logits, _ = torch.topk(logits, k)
+            min_val = top_logits[:, -1].unsqueeze(-1)
+            logits = torch.where(
+                logits < min_val, torch.full_like(logits, float("-inf")), logits
+            )
+
+        if temp > 0.0:
+            probs = torch.softmax(logits / temp, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+        else:
+            idx_next = torch.argmax(logits, dim=-1, keepdim=True)
+
+        if eos_id is not None and idx_next.item() == eos_id:
+            break
+
+        idx = torch.cat((idx, idx_next), dim=1)
+
+    return idx
+
+
+# ==========================================================================
+# Prompt formatting
+# ==========================================================================
+def build_prompt(instruction, use_system=True):
+    if use_system:
+        return (
+            f"### System:\n{SYSTEM_TEXT}\n\n"
+            f"### Instruction:\n{instruction}\n\n### Response:\n"
         )
-    if missing:
-        raise RuntimeError(f"missing keys after filtering, real mismatch: {missing}")
-    if unexpected:
-        raise RuntimeError(
-            f"unexpected keys after filtering, real mismatch: {unexpected}"
+    return (
+        "Below is an instruction that describes a task. "
+        "Write a response that appropriately completes the request.\n\n"
+        f"### Instruction:\n{instruction}\n\n### Response:\n"
+    )
+
+
+# ==========================================================================
+# Single generation
+# ==========================================================================
+def run_prompt(
+    model, tokenizer, device, prompt, max_new_tokens, context_size, temp, top_k
+):
+    encoded = text_to_token_ids(prompt, tokenizer).to(device)
+    output = generate(
+        model=model,
+        idx=encoded,
+        max_new_tokens=max_new_tokens,
+        context_size=context_size,
+        temp=temp,
+        top_k=top_k,
+        eos_id=EOS_ID,
+    )
+    prompt_len = encoded.size(1)
+    generated_ids = output[0, prompt_len:]
+    return tokenizer.decode(generated_ids.tolist())
+
+
+# ==========================================================================
+# Interactive mode
+# ==========================================================================
+def interactive_loop(
+    model,
+    tokenizer,
+    device,
+    max_new_tokens,
+    context_size,
+    temp,
+    top_k,
+    use_system=True,
+):
+    console = Console()
+
+    print()
+    print("[bold cyan]VADER interactive mode[/bold cyan]")
+    print("[dim]Type 'exit' or 'quit' to stop.[/dim]")
+    print()
+
+    while True:
+        try:
+            instruction = console.input("[bold yellow]You:[/bold yellow] ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            break
+
+        if not instruction:
+            continue
+        if instruction.lower() in {"exit", "quit"}:
+            break
+
+        prompt = build_prompt(instruction, use_system=use_system)
+
+        response = run_prompt(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            prompt=prompt,
+            max_new_tokens=max_new_tokens,
+            context_size=context_size,
+            temp=temp,
+            top_k=top_k,
         )
 
+        print(f"[bold cyan]Vader:[/bold cyan] {response.strip()}")
+        print()
 
+
+# ==========================================================================
+# CLI
+# ==========================================================================
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run Vader language model inference.")
+    parser.add_argument(
+        "--model", default=MODEL_PATH, help="Path to Vader .pth weights."
+    )
+    parser.add_argument(
+        "--prompt",
+        default=None,
+        help="Run a single instruction instead of interactive mode.",
+    )
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=100,
+        help="Maximum number of generated tokens.",
+    )
+    parser.add_argument(
+        "--context-size",
+        type=int,
+        default=CONFIG_124M["context_len"],
+        help="Maximum context window.",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.8,
+        help="Sampling temperature. 0 = greedy decoding.",
+    )
+    parser.add_argument(
+        "--top-k", type=int, default=40, help="Top-k sampling. Use 0 to disable."
+    )
+    parser.add_argument(
+        "--no-system",
+        action="store_true",
+        help="Use the generic instruction template instead of Vader's system prompt.",
+    )
+    return parser.parse_args()
+
+
+# ==========================================================================
+# Main
+# ==========================================================================
 def main():
+    args = parse_args()
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device in use: {device}")
+    print(f"[bold]Device in use:[/bold] {device}")
+    if device.type == "cuda":
+        print(f"[dim]GPU: {torch.cuda.get_device_name(0)}[/dim]")
+
+    if not (1 <= args.context_size <= CONFIG_124M["context_len"]):
+        raise ValueError(
+            f"context_size must be between 1 and {CONFIG_124M['context_len']}"
+        )
+    if args.max_new_tokens < 1:
+        raise ValueError("max_new_tokens must be >= 1")
+    if args.temperature < 0:
+        raise ValueError("temperature cannot be negative")
+
+    top_k = None if args.top_k <= 0 else args.top_k
 
     tokenizer = tiktoken.get_encoding("gpt2")
 
-    model = Model(CONFIG_124m)
-    load_weights(model, MODEL, device)
+    model = Model(CONFIG_124M)
+    load_weights(model, args.model, device)
     model.to(device)
     model.eval()
 
-    context_size = TRAINED_CTX
-
-    prompt = "Every effort moves you"
-    encoded = text_to_token_ids(prompt, tokenizer).to(device)
-
-    token_ids = generate(
-        model=model,
-        idx=encoded,
-        max_new_tokens=50,
-        context_size=context_size,
-        temp=0.8,
-        top_k=40,
-        eos_id=None,
+    print(f"[dim]context window: {args.context_size} tokens[/dim]")
+    print(
+        f"[dim]temperature: {args.temperature} | top_k: {top_k} | max_new_tokens: {args.max_new_tokens}[/dim]"
     )
-    print(token_ids_to_text(token_ids, tokenizer))
+    print()
+
+    if args.prompt is not None:
+        prompt = build_prompt(args.prompt, use_system=not args.no_system)
+        response = run_prompt(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            prompt=prompt,
+            max_new_tokens=args.max_new_tokens,
+            context_size=args.context_size,
+            temp=args.temperature,
+            top_k=top_k,
+        )
+        print("[bold cyan]Vader:[/bold cyan]")
+        print(response.strip())
+        return
+
+    interactive_loop(
+        model=model,
+        tokenizer=tokenizer,
+        device=device,
+        max_new_tokens=args.max_new_tokens,
+        context_size=args.context_size,
+        temp=args.temperature,
+        top_k=top_k,
+        use_system=not args.no_system,
+    )
 
 
 if __name__ == "__main__":
