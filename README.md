@@ -4,6 +4,8 @@ A GPT-2-scale language model built from scratch, trained on a single free-tier G
 
 Base pretrain, context-extension + Star Wars domain mix-in, and instruction fine-tuning with a hybrid factual/Star Wars-flavoured identity are all complete. Packaging for standard `transformers`-style distribution is in progress.
 
+Trained model weights are on huggingface bucket [huggingface.co/buckets/thehackersbrain/vader](https://huggingface.co/buckets/thehackersbrain/vader).
+
 ## Architecture
 
 Standard decoder-only transformer, GPT-2 recipe:
